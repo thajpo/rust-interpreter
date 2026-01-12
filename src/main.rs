@@ -14,9 +14,14 @@ fn main() {
             Some(Ok(input)) => {
                 let tokens = tokenize(&input);
                 println!("{:?}", tokens);
+
                 match parse_tokens(tokens) {
-                    Ok(tree) => println!("{:?}", tree),
-                    Err(e) => println!("{}", e),
+                    Ok(tree) => {
+                        println!("{:?}", interpret_tree(tree));
+                    }
+                    Err(e) => {
+                        println!("{}", e);
+                    }
                 }
             }
             _ => break,
@@ -24,7 +29,29 @@ fn main() {
     }
 }
 
-fn interpret_tree(tree: ExecutionNode) {}
+fn interpret_tree(tree: ExecutionNode) -> i64 {
+    // tree has structure ExecutionNode {Number _or_ Call}
+    // Call(op, <nodes>)
+    // <nodes> can contain call objects
+    // we need to go depth-wise into tree <node>, evaluate and work our way up
+    match tree {
+        ExecutionNode::Number(n) => n,
+        ExecutionNode::Call(op, args) => {
+            let mut values: Vec<i64> = vec![];
+            println!("Args: {:?}", args);
+            for child in args {
+                println!("Child: {:?}", child);
+                values.push(interpret_tree(child));
+            }
+            match op {
+                Operations::Add => values.iter().sum(),
+                Operations::Mul => values.iter().product(),
+                Operations::Sub => values[0] - values[1],
+                Operations::Div => values[0] / values[1],
+            }
+        }
+    }
+}
 
 // Defines limit of operations we can perform
 #[derive(Debug)]
@@ -64,8 +91,12 @@ fn parse_tokens(tokens: Vec<String>) -> Result<ExecutionNode, String> {
             }
             ")" => {
                 // Remove partial node when expression ends, add finished node to tree
-                let node = stack.pop().unwrap();
-                let complete = ExecutionNode::Call(node.op.unwrap(), node.args);
+                let node = stack
+                    .pop()
+                    .ok_or("Err: Closing parenthases without open.")?;
+
+                let op = node.op.ok_or("Err: No operation provided.")?;
+                let complete = ExecutionNode::Call(op, node.args);
 
                 if let Some(parent) = stack.last_mut() {
                     parent.args.push(complete);
@@ -76,21 +107,23 @@ fn parse_tokens(tokens: Vec<String>) -> Result<ExecutionNode, String> {
             _ => {
                 // Handling operations, numbers, and errors
                 // If token returns operation, then we add the Op to the stack
+                let current = stack
+                    .last_mut()
+                    .ok_or("Err: Tried accessing stack with nothing on it.")?;
+
                 if let Some(op) = pase_operations(&token) {
-                    stack.last_mut().unwrap().op = Some(op);
+                    current.op = Some(op);
                 }
                 // If token returns a number, then we add to the PartialNode
-                if let Ok(n) = token.parse::<i64>() {
-                    stack
-                        .last_mut()
-                        .unwrap()
-                        .args
-                        .push(ExecutionNode::Number(n));
+                else if let Ok(n) = token.parse::<i64>() {
+                    current.args.push(ExecutionNode::Number(n));
+                } else {
+                    return Err(format!("Unknown token: {}", token));
                 }
             }
         }
     }
-    result.ok_or("Closing parentheses not used, or other error".to_string())
+    result.ok_or("Err: No closig parenthases.".to_string())
 }
 
 fn pase_operations(s: &str) -> Option<Operations> {
