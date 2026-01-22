@@ -8,7 +8,7 @@ const DEBUG: bool = false;
 fn main() {
     // Get latest on lines buffer
     let mut lines = io::stdin().lines();
-    let interpreter = Interpreter::new();
+    let mut interpreter = Interpreter::new();
     loop {
         print!("> ");
         io::stdout().flush().expect("Failed to flush stdout");
@@ -73,6 +73,7 @@ struct PartialNode {
 #[derive(Debug)]
 enum HeadKind {
     BuiltIn(Operations),
+    UserDefined(String),
     Let,
     Def,
 }
@@ -93,12 +94,30 @@ fn parse_tokens(tokens: Vec<String>) -> Result<ExecutionNode, String> {
                 });
             }
             TokenKind::EndExpr => {
-                let node = stack
+                let mut node = stack
                     .pop()
                     .ok_or("Err: Closing parentheses without open.")?;
 
                 let head = node.head.ok_or("Err: No head found.")?;
-                let new_node = ExecutionNode::Call(head, node.args);
+
+                let new_node = match head {
+                    HeadKind::Let | HeadKind::Def => {
+                        // we expect a variable or function name as first argument
+                        let name = match &node.args[0] {
+                            ExecutionNode::Variable(name) => name.clone(),
+                            _ => return Err("Err: First argument must be a variable.".to_string()),
+                        };
+                        let value = node.args.remove(1);
+                        match head {
+                            HeadKind::Let => ExecutionNode::Let(name, Box::new(value)),
+                            HeadKind::Def => ExecutionNode::Def(name, Box::new(value)),
+                            _ => unreachable!(),
+                        }
+                    }
+                    HeadKind::BuiltIn(_) | HeadKind::UserDefined(_) => {
+                        ExecutionNode::Call(head, node.args)
+                    }
+                };
 
                 if let Some(current) = stack.last_mut() {
                     current.args.push(new_node);
@@ -179,7 +198,7 @@ impl Interpreter {
     fn set_var(&mut self, name: String, value: i64) {
         self.vars.insert(name, value);
     }
-    fn parse_and_evaluate_tree(&self, tree: ExecutionNode) -> Option<i64> {
+    fn parse_and_evaluate_tree(&mut self, tree: ExecutionNode) -> Option<i64> {
         // tree has structure ExecutionNode {Number _or_ Call}
         // Call(op, <nodes>)
         // <nodes> can contain call objects
@@ -210,6 +229,8 @@ impl Interpreter {
                     HeadKind::BuiltIn(Operations::Mul) => Some(values.iter().product()),
                     HeadKind::BuiltIn(Operations::Sub) => Some(values[0] - values[1]),
                     HeadKind::BuiltIn(Operations::Div) => Some(values[0] / values[1]),
+                    HeadKind::UserDefined(_) => todo!(),
+                    HeadKind::Let | HeadKind::Def => unreachable!(),
                 }
             }
             ExecutionNode::Let(name, value) => {
